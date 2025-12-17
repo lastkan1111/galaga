@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Mini Galaga (Client-only)</title>
+  <style>
+    html, body { margin:0; padding:0; background:#0b0f1a; height:100%; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #wrap { position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
+    canvas { background: radial-gradient(1200px 700px at 50% 20%, #121a33 0%, #070a12 60%, #05060b 100%); border:1px solid rgba(255,255,255,.12); border-radius:14px; box-shadow:0 12px 40px rgba(0,0,0,.45); touch-action:none; }
+    .hud { position:absolute; top:14px; left:14px; color:#d7e3ff; font-size:14px; line-height:1.35; opacity:.95; }
+    .hud b { color:#ffffff; }
+    .hint { position:absolute; bottom:14px; left:14px; color:#a9b9e6; font-size:12px; opacity:.85; }
+    .btns { position:absolute; bottom:14px; right:14px; display:flex; gap:8px; }
+    button {
+      background:rgba(255,255,255,.08); color:#eaf1ff; border:1px solid rgba(255,255,255,.16);
+      padding:8px 10px; border-radius:10px; cursor:pointer; backdrop-filter: blur(6px);
+    }
+    button:hover { background:rgba(255,255,255,.12); }
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="420" height="720"></canvas>
+
+  <div class="hud" id="hud">
+    <div><b>Mini Galaga</b></div>
+    <div>점수: <span id="score">0</span></div>
+    <div>목숨: <span id="lives">3</span></div>
+    <div>웨이브: <span id="wave">1</span></div>
+  </div>
+
+  <div class="hint">
+    이동: ← → / A D / (모바일) 드래그 · 발사: Space / (모바일) 화면 탭<br/>
+    R: 리스타트 · P: 일시정지
+  </div>
+
+  <div class="btns">
+    <button id="pauseBtn">P(일시정지)</button>
+    <button id="restartBtn">R(재시작)</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  const scoreEl = document.getElementById("score");
+  const livesEl = document.getElementById("lives");
+  const waveEl  = document.getElementById("wave");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const restartBtn = document.getElementById("restartBtn");
+
+  // --- Helpers ---
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  // --- Game state ---
+  let W = canvas.width, H = canvas.height;
+  let keys = new Set();
+  let paused = false;
+
+  let score = 0;
+  let lives = 3;
+  let wave = 1;
+  let gameOver = false;
+
+  // Player
+  const player = {
+    x: W/2, y: H - 70,
+    w: 26, h: 26,
+    speed: 320, // px/s
+    cooldown: 0,
+    fireDelay: 0.16,
+    invuln: 0,
+  };
+
+  // Entities
+  let bullets = [];
+  let enemyBullets = [];
+  let enemies = [];
+  let particles = [];
+  let stars = [];
+
+  // Formation movement
+  let formation = {
+    x: 0,
+    y: 70,
+    dir: 1,         // 1 right, -1 left
+    speed: 55,      // px/s
+    drop: 18,       // drop when hits edge
+    t: 0,
+    wobble: 6,      // vertical wobble
+  };
+
+  // Starfield
+  function initStars() {
+    stars = Array.from({length: 90}, () => ({
+      x: Math.random()*W,
+      y: Math.random()*H,
+      r: rand(0.6, 1.8),
+      s: rand(25, 90)
+    }));
+  }
+
+  function spawnWave(n) {
+    enemies = [];
+    enemyBullets = [];
+    bullets = [];
+    particles = [];
+    formation.x = 0;
+    formation.y = 70;
+    formation.dir = 1;
+    formation.speed = 55 + (n-1)*8;
+
+    // rows/cols scale a bit
+    const rows = clamp(3 + Math.floor((n-1)/2), 3, 6);
+    const cols = clamp(8, 8, 10);
+    const gapX = 38;
+    const gapY = 34;
+
+    const startX = W/2 - ((cols-1)*gapX)/2;
+    const startY = 0;
+
+    for (let r=0; r<rows; r++) {
+      for (let c=0; c<cols; c++) {
+        const type = (r === 0) ? "elite" : (r < 2 ? "fast" : "basic");
+        const hp = type === "elite" ? 2 : 1;
+
+        enemies.push({
+          x: startX + c*gapX,
+          y: startY + r*gapY,
+          w: 24, h: 20,
+          hp,
+          type,
+          // small per-enemy wiggle seed
+          seed: Math.random()*1000,
+          shootCd: rand(0.7, 1.8) * Math.max(0.55, 1.05 - n*0.05),
+          alive: true,
+        });
+      }
+    }
+  }
+
+  function restart() {
+    score = 0;
+    lives = 3;
+    wave = 1;
+    gameOver = false;
+    paused = false;
+    player.x = W/2;
+    player.cooldown = 0;
+    player.invuln = 0;
+    spawnWave(wave);
+    syncHUD();
+  }
+
+  function nextWave() {
+    wave++;
+    spawnWave(wave);
+    syncHUD();
+  }
+
+  function syncHUD() {
+    scoreEl.textContent = score;
+    livesEl.textContent = lives;
+    waveEl.textContent = wave;
+  }
+
+  // Input
+  window.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if (k === "p") { paused = !paused; return; }
+    if (k === "r") { restart(); return; }
+    if (k === " " || k === "spacebar") e.preventDefault();
+    keys.add(k);
+  });
+  window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+
+  // Touch / pointer: drag to move, tap to shoot
+  let pointerDown = false;
+  let lastTap = 0;
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointerDown = true;
+    movePlayerToPointer(e);
+    // quick tap shoot
+    const now = performance.now();
+    if (now - lastTap < 260) shoot(); // double-tap = shoot
+    lastTap = now;
+    // single tap shoot as well (feel good on mobile)
+    shoot();
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!pointerDown) return;
+    movePlayerToPointer(e);
+  });
+  canvas.addEventListener("pointerup", () => pointerDown = false);
+  canvas.addEventListener("pointercancel", () => pointerDown = false);
+
+  function movePlayerToPointer(e) {
+    const rect = canvas.getBoundingClientRect();
+    const px = (e.clientX - rect.left) * (W / rect.width);
+    player.x = clamp(px, 18, W-18);
+  }
+
+  pauseBtn.onclick = () => paused = !paused;
+  restartBtn.onclick = () => restart();
+
+  // Shooting
+  function shoot() {
+    if (paused || gameOver) return;
+    if (player.cooldown > 0) return;
+    player.cooldown = player.fireDelay;
+
+    bullets.push({
+      x: player.x,
+      y: player.y - 18,
+      vx: 0,
+      vy: -520,
+      r: 3
+    });
+  }
+
+  // Collisions (AABB)
+  function hitAABB(a, b) {
+    return (
+      a.x - a.w/2 < b.x + b.w/2 &&
+      a.x + a.w/2 > b.x - b.w/2 &&
+      a.y - a.h/2 < b.y + b.h/2 &&
+      a.y + a.h/2 > b.y - b.h/2
+    );
+  }
+
+  function explode(x, y, n=18) {
+    for (let i=0; i<n; i++) {
+      const ang = Math.random()*Math.PI*2;
+      const sp = rand(60, 240);
+      particles.push({
+        x, y,
+        vx: Math.cos(ang)*sp,
+        vy: Math.sin(ang)*sp,
+        life: rand(0.25, 0.65),
+        r: rand(1, 2.4)
+      });
+    }
+  }
+
+  function killPlayer() {
+    if (player.invuln > 0) return;
+    lives--;
+    player.invuln = 1.4;
+    explode(player.x, player.y, 26);
+    if (lives <= 0) {
+      gameOver = true;
+    }
+    syncHUD();
+  }
+
+  // Main loop
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+
+    if (!paused) update(dt, now/1000);
+    render(dt, now/1000);
+
+    requestAnimationFrame(loop);
+  }
+
+  function update(dt, t) {
+    if (gameOver) return;
+
+    // Stars
+    for (const s of stars) {
+      s.y += s.s * dt;
+      if (s.y > H+10) { s.y = -10; s.x = Math.random()*W; s.s = rand(25, 90); s.r = rand(0.6, 1.8); }
+    }
+
+    // Player move
+    const left  = keys.has("arrowleft") || keys.has("a");
+    const right = keys.has("arrowright") || keys.has("d");
+    if (left)  player.x -= player.speed * dt;
+    if (right) player.x += player.speed * dt;
+    player.x = clamp(player.x, 18, W-18);
+
+    // Fire
+    if (keys.has(" ") || keys.has("space")) shoot();
+
+    // Cooldowns
+    player.cooldown = Math.max(0, player.cooldown - dt);
+    player.invuln = Math.max(0, player.invuln - dt);
+     
+     // Auto fire (always shoot)
+      shoot();
+
+
+    // Formation movement (classic 좌우 + 내려오기)
+    formation.t += dt;
+    formation.x += formation.dir * formation.speed * dt;
+
+    // Determine formation bounds
+    let minX = Infinity, maxX = -Infinity;
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      minX = Math.min(minX, e.x + formation.x);
+      maxX = Math.max(maxX, e.x + formation.x);
+    }
+    if (minX !== Infinity) {
+      if (minX < 30 && formation.dir < 0) {
+        formation.dir = 1;
+        formation.y += formation.drop;
+      }
+      if (maxX > W - 30 && formation.dir > 0) {
+        formation.dir = -1;
+        formation.y += formation.drop;
+      }
+    }
+
+    // Enemy behavior + shooting
+    const aliveEnemies = enemies.filter(e => e.alive);
+    for (const e of aliveEnemies) {
+      e.shootCd -= dt;
+      if (e.shootCd <= 0) {
+        e.shootCd = rand(0.9, 2.1) * Math.max(0.55, 1.05 - wave*0.05);
+
+        // shoot chance depends on type
+        const chance = e.type === "elite" ? 0.55 : (e.type === "fast" ? 0.38 : 0.28);
+        if (Math.random() < chance) {
+          const ex = e.x + formation.x;
+          const ey = e.y + formation.y + Math.sin((t + e.seed) * 3) * 2;
+
+          // Aim slightly toward player
+          const dx = (player.x - ex) * 0.12;
+          enemyBullets.push({
+            x: ex,
+            y: ey + 10,
+            vx: clamp(dx, -140, 140),
+            vy: 300 + wave*8,
+            r: 3
+          });
+        }
+      }
+    }
+
+    // Bullets update
+    for (const b of bullets) { b.x += b.vx * dt; b.y += b.vy * dt; }
+    bullets = bullets.filter(b => b.y > -30);
+
+    for (const b of enemyBullets) { b.x += b.vx * dt; b.y += b.vy * dt; }
+    enemyBullets = enemyBullets.filter(b => b.y < H + 40);
+
+    // Particles
+    for (const p of particles) {
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= (1 - 2.2*dt);
+      p.vy *= (1 - 2.2*dt);
+    }
+    particles = particles.filter(p => p.life > 0);
+
+    // Collisions: player bullets -> enemies
+    for (const b of bullets) {
+      for (const e of enemies) {
+        if (!e.alive) continue;
+        const ex = e.x + formation.x;
+        const ey = e.y + formation.y + Math.sin((t + e.seed) * 2.8) * formation.wobble;
+
+        const boxB = { x: b.x, y: b.y, w: b.r*2, h: b.r*2 };
+        const boxE = { x: ex, y: ey, w: e.w, h: e.h };
+        if (hitAABB(boxB, boxE)) {
+          b.y = -9999; // mark remove
+          e.hp -= 1;
+          explode(ex, ey, 10);
+          if (e.hp <= 0) {
+            e.alive = false;
+            score += (e.type === "elite" ? 50 : (e.type === "fast" ? 30 : 20));
+            explode(ex, ey, 20);
+          } else {
+            score += 5;
+          }
+          syncHUD();
+          break;
+        }
+      }
+    }
+    bullets = bullets.filter(b => b.y > -500);
+
+    // Enemy bullets -> player
+    if (player.invuln <= 0) {
+      const pBox = { x: player.x, y: player.y, w: player.w, h: player.h };
+      for (const b of enemyBullets) {
+        const bBox = { x: b.x, y: b.y, w: b.r*2, h: b.r*2 };
+        if (hitAABB(pBox, bBox)) {
+          b.y = 99999;
+          killPlayer();
+          break;
+        }
+      }
+      enemyBullets = enemyBullets.filter(b => b.y < 9999);
+    }
+
+    // If enemies reach too low -> player hit
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const ey = e.y + formation.y;
+      if (ey > H - 140) {
+        killPlayer();
+        formation.y -= 35; // small pushback to avoid instant chain
+        break;
+      }
+    }
+
+    // Clear wave
+    if (enemies.every(e => !e.alive)) {
+      nextWave();
+    }
+  }
+
+  function render(dt, t) {
+    ctx.clearRect(0, 0, W, H);
+
+    // Stars
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    for (const s of stars) {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+      ctx.fillStyle = "rgba(220,235,255,0.85)";
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Player
+    drawPlayer(t);
+
+    // Enemies
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const ex = e.x + formation.x;
+      const ey = e.y + formation.y + Math.sin((t + e.seed) * 2.8) * formation.wobble;
+      drawEnemy(ex, ey, e.type, e.hp);
+    }
+
+    // Bullets
+    ctx.save();
+    ctx.fillStyle = "#c6ff65";
+    for (const b of bullets) {
+      ctx.beginPath();
+      ctx.roundRect(b.x-2, b.y-8, 4, 16, 3);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#ff6d8c";
+    for (const b of enemyBullets) {
+      ctx.beginPath();
+      ctx.roundRect(b.x-2, b.y-6, 4, 12, 3);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Particles
+    ctx.save();
+    for (const p of particles) {
+      const a = clamp(p.life / 0.65, 0, 1);
+      ctx.globalAlpha = a;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fillStyle = "rgba(255,220,140,0.95)";
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Overlays
+    if (paused) {
+      overlayText("일시정지 (P)", "Space로 발사 / R 재시작");
+    }
+    if (gameOver) {
+      overlayText("GAME OVER", "R 키로 재시작");
+    }
+  }
+
+  function drawPlayer(t) {
+    const blink = player.invuln > 0 ? (Math.sin(t*18) > 0 ? 0.35 : 1) : 1;
+    ctx.save();
+    ctx.globalAlpha = blink;
+
+    // ship body
+    const x = player.x, y = player.y;
+    ctx.translate(x, y);
+
+    // glow
+    ctx.beginPath();
+    ctx.arc(0, 4, 22, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(110,180,255,0.15)";
+    ctx.fill();
+
+    // main
+    ctx.beginPath();
+    ctx.moveTo(0, -16);
+    ctx.lineTo(16, 12);
+    ctx.lineTo(0, 8);
+    ctx.lineTo(-16, 12);
+    ctx.closePath();
+    ctx.fillStyle = "#eaf1ff";
+    ctx.fill();
+
+    // cockpit
+    ctx.beginPath();
+    ctx.roundRect(-5, -6, 10, 10, 4);
+    ctx.fillStyle = "#5fb0ff";
+    ctx.fill();
+
+    // engine flames
+    ctx.beginPath();
+    ctx.moveTo(-9, 12);
+    ctx.lineTo(-4, 22 + Math.sin(t*20)*2);
+    ctx.lineTo(0, 12);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,180,80,0.95)";
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(9, 12);
+    ctx.lineTo(4, 22 + Math.cos(t*18)*2);
+    ctx.lineTo(0, 12);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,120,90,0.9)";
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawEnemy(x, y, type, hp) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    // base color by type
+    let body = "#ffd166";
+    let wing = "rgba(255,209,102,0.55)";
+    let eye  = "#1a1f2e";
+
+    if (type === "fast") {
+      body = "#b8ff7a";
+      wing = "rgba(184,255,122,0.55)";
+      eye  = "#0a1112";
+    }
+    if (type === "elite") {
+      body = "#ff7aa5";
+      wing = "rgba(255,122,165,0.55)";
+      eye  = "#1b0c12";
+    }
+
+    // wings
+    ctx.beginPath();
+    ctx.ellipse(-14, 0, 12, 7, -0.25, 0, Math.PI*2);
+    ctx.ellipse(14, 0, 12, 7, 0.25, 0, Math.PI*2);
+    ctx.fillStyle = wing;
+    ctx.fill();
+
+    // body
+    ctx.beginPath();
+    ctx.roundRect(-12, -9, 24, 18, 7);
+    ctx.fillStyle = body;
+    ctx.fill();
+
+    // eyes
+    ctx.beginPath();
+    ctx.arc(-5, -1, 2.2, 0, Math.PI*2);
+    ctx.arc(5, -1, 2.2, 0, Math.PI*2);
+    ctx.fillStyle = eye;
+    ctx.fill();
+
+    // hp indicator for elite (tiny pip)
+    if (hp > 1) {
+      ctx.beginPath();
+      ctx.arc(0, -12, 2.3, 0, Math.PI*2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function overlayText(title, sub) {
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.font = "bold 34px system-ui, sans-serif";
+    ctx.fillText(title, W/2, H/2 - 10);
+
+    ctx.fillStyle = "rgba(230,240,255,0.9)";
+    ctx.font = "14px system-ui, sans-serif";
+    ctx.fillText(sub, W/2, H/2 + 24);
+
+    ctx.restore();
+  }
+
+  // Resize for device (keep aspect)
+  function fit() {
+    const wrap = document.getElementById("wrap");
+    const maxW = wrap.clientWidth;
+    const maxH = wrap.clientHeight;
+
+    // keep 420x720 ratio
+    const targetRatio = 420/720;
+    let w = Math.min(maxW - 18, 520);
+    let h = w / targetRatio;
+    if (h > maxH - 18) { h = maxH - 18; w = h * targetRatio; }
+
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+  }
+  window.addEventListener("resize", fit);
+
+  // Boot
+  initStars();
+  fit();
+  restart();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
