@@ -1,0 +1,1435 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Mini Galaga (Single, Joystick + HP + Round + Cards)</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #070a12;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    #wrap {
+      width: 100%; height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px;
+      box-sizing: border-box;
+      position: relative; /* ✅ 오버레이 기준점 */
+    }
+
+    canvas {
+      width: min(92vw, 520px);
+      height: auto;
+      aspect-ratio: 420 / 720;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+      touch-action: none;
+      background:
+        radial-gradient(1200px 700px at 50% 20%, #121a33 0%, #070a12 60%, #05060b 100%);
+      pointer-events: auto;
+    }
+
+    /* GAME OVER SCORE CARD */
+    .scoreCard{
+      margin-bottom: 30px;
+      padding: 16px 26px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.22);
+      background:
+        radial-gradient(140px 80px at 30% 20%, rgba(255,70,70,0.18), transparent 60%),
+        linear-gradient(180deg, rgba(30,55,110,0.40), rgba(0,0,0,0.35));
+      box-shadow:
+        0 20px 60px rgba(0,0,0,0.55),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+      text-align:center;
+      line-height:1.0;
+      backdrop-filter: blur(8px);
+      color: rgba(255,80,80,0.95);
+      font-weight: 900;
+      font-size: 16px;
+      letter-spacing: 2px;
+    }
+    .scoreCard .scoreNum{
+      display:inline-block;
+      margin-top: 8px;
+      color:#fff;
+      font-size: 44px;
+      letter-spacing: 3px;
+      text-shadow: 0 12px 24px rgba(0,0,0,0.75);
+    }
+    .goTitle{
+      color:#fff;
+      font-size:46px;
+      font-weight:900;
+      letter-spacing:2px;
+      margin: 6px 0 18px;
+      text-shadow: 0 14px 28px rgba(0,0,0,0.7);
+    }
+
+    /* CARD OVERLAY */
+    #cardOverlay{
+      position:absolute;
+      inset:0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      background:rgba(0,0,0,0.55);
+      z-index:20;
+      pointer-events: auto;
+    }
+    .cardWrap{
+      /* ✅ 캔버스 폭(=게임 화면 폭) 안에서만 카드가 배치되도록 고정 */
+      width: min(92vw, 520px);
+      display:flex;
+      gap:10px;
+      padding: 0 8px;
+      box-sizing: border-box;
+      justify-content: space-between;
+      align-items: stretch;
+    }
+    .card{
+      /* ✅ 3장이 항상 화면 안에 들어오도록 유동폭 */
+      flex: 1 1 0;
+      min-width: 0;
+      width: auto;
+      max-width: 150px;
+      padding: 12px;
+      border-radius: 14px;
+      background:#222;
+      color:#fff;
+      text-align:center;
+      cursor:pointer;
+      transform: translateY(20px);
+      opacity:0;
+      animation: cardIn 0.35s ease forwards;
+      user-select:none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .card h3{ font-size:18px; margin: 6px 0 4px; }
+    .card p{ font-size:12px; margin: 0; opacity:0.85; }
+    .card .lines{ margin-top:10px; font-size:13px; font-weight:700; }
+
+    .card:active { transform: translateY(0) scale(0.98); }
+
+    @media (max-width: 420px){
+      .cardWrap{ gap:8px; padding: 0 6px; }
+      .card{ padding:10px; }
+      .card h3{ font-size:16px; }
+      .card p{ font-size:11px; }
+      .card .lines{ font-size:12px; }
+    }
+    @media (max-width: 360px){
+      .cardWrap{ gap:6px; padding: 0 4px; }
+      .card{ padding:9px; }
+      .card h3{ font-size:15px; }
+      .card .lines{ font-size:11px; }
+    }
+
+@keyframes cardIn{
+      to{ opacity:1; transform:translateY(0); }
+    }
+
+    /* GAME OVER overlay */
+    #gameOverUI{
+      position:absolute;
+      inset: 0;
+      margin: auto;
+      width: min(92vw, 520px);
+      aspect-ratio: 420 / 720;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      flex-direction:column;
+      background:rgba(0,0,0,0.55);
+      border-radius:14px;
+      pointer-events:auto;
+      z-index:30;
+    }
+    #restartBtn{
+      padding:12px 22px;
+      font-size:18px;
+      font-weight:800;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,0.3);
+      background:rgba(40,100,200,0.6);
+      color:#fff;
+      cursor:pointer;
+    }
+    #restartBtn:active { transform: scale(0.98); }
+  </style>
+</head>
+
+<body>
+  <div id="wrap">
+    <canvas id="c" width="420" height="720"></canvas>
+
+    <div id="cardOverlay">
+      <div class="cardWrap"></div>
+    </div>
+
+    <div id="gameOverUI">
+      <div id="finalScore" class="scoreCard">
+        SCORE<br><span class="scoreNum">000000</span>
+      </div>
+      <div class="goTitle">GAME OVER</div>
+      <button id="restartBtn">재시작</button>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // UI
+  const gameOverUI = document.getElementById("gameOverUI");
+  const restartBtn = document.getElementById("restartBtn");
+  const finalScore = document.getElementById("finalScore");
+
+  const cardOverlay = document.getElementById("cardOverlay");
+  const cardWrap = cardOverlay.querySelector(".cardWrap");
+
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  const W = canvas.width;
+  const H = canvas.height;
+
+  // Helpers
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const rand  = (a, b) => a + Math.random() * (b - a);
+
+  function roundRectPath(x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, Math.min(w/2, h/2)));
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y,     x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x,     y + h, r);
+    ctx.arcTo(x,     y + h, x,     y,     r);
+    ctx.arcTo(x,     y,     x + w, y,     r);
+    ctx.closePath();
+  }
+  function aabb(ax, ay, aw, ah, bx, by, bw, bh) {
+    return (ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by);
+  }
+
+  // 🌈 편대 컬러
+  const FORMATION_COLORS = [
+    { body:"#7AE7C7", wing:"rgba(122,231,199,0.55)", eye:"#0b1f1a" },
+    { body:"#8FD3FF", wing:"rgba(143,211,255,0.55)", eye:"#0b1a22" },
+    { body:"#A3A1FF", wing:"rgba(163,161,255,0.55)", eye:"#16122b" },
+    { body:"#C9A7EB", wing:"rgba(201,167,235,0.55)", eye:"#201628" },
+    { body:"#FFB7D5", wing:"rgba(255,183,213,0.55)", eye:"#2b0f1c" },
+    { body:"#FFC38A", wing:"rgba(255,195,138,0.55)", eye:"#2b1a0b" },
+    { body:"#FFE27A", wing:"rgba(255,226,122,0.55)", eye:"#2b250b" },
+    { body:"#B6E26D", wing:"rgba(182,226,109,0.55)", eye:"#1b2b0b" },
+    { body:"#6EDB8F", wing:"rgba(110,219,143,0.55)", eye:"#0b2b16" },
+    { body:"#6FAAFF", wing:"rgba(111,170,255,0.55)", eye:"#0b1b2b" },
+  ];
+
+  // =========================
+  // GAME STATE
+  // =========================
+  let HP_MAX = 100;
+  const ROUND_MAX = 100;
+
+  let hp = HP_MAX;
+  let hpDisplay = HP_MAX;
+  let hpText = HP_MAX;
+
+  let score = 0;
+  let wave = 1;
+
+  let lives = 2;
+  let respawnTimer = 0;
+  let roundIntro = 0;
+  let roundIntroShown = false;
+
+  let paused = false;
+  let gameOver = false;
+
+  // 카드 선택 상태
+  let choosingCard = false;
+
+  // 스탯 누적 (상한 적용)
+  const stats = {
+    move: 0,      // 이속 %
+    evade: 0,     // 회피 %
+    fire: 0,      // 공속 %
+    crit: 0,      // 치명 %
+    hpUp: 0,      // HP 추가 횟수(최대 9)
+    accuracy: 0   // 명중 % (현재는 저장만)
+  };
+
+  const player = {
+    x: W / 2,
+    y: H - 160,
+    w: 26,
+    h: 26,
+    speed: 380,
+    cooldown: 0,
+    fireDelay: 1.0,
+    invuln: 0
+  };
+
+  let bullets = [];
+  let enemyBullets = [];
+  let enemies = [];
+  let particles = [];
+  let scorePops = [];
+  let stars = [];
+
+  const formation = {
+    x: 0,
+    y: 85,
+    dir: 1,
+    speed: 55,
+    drop: 18,
+    wobble: 6
+  };
+
+  // =========================
+  // INPUT
+  // =========================
+  const keys = new Set();
+  window.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if (k === " " || k === "spacebar") e.preventDefault();
+    keys.add(k);
+    if (k === "p" && !choosingCard) paused = !paused;
+  });
+  window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+
+  // Joystick (bottom center)
+  const joy = {
+    cx: W / 2,
+    cy: H - 70,
+    baseR: 56,
+    knobR: 24,
+    active: false,
+    pid: null,
+    dx: 0,
+    knobX: 0,
+    knobY: 0
+  };
+  function resetJoy() {
+    joy.dx = 0;
+    joy.knobX = 0;
+    joy.knobY = 0;
+  }
+  function getPointerPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) * (W / rect.width),
+      y: (e.clientY - rect.top)  * (H / rect.height),
+    };
+  }
+  function dist(x1,y1,x2,y2){ return Math.hypot(x1-x2, y1-y2); }
+  function updateJoy(px, py) {
+    const vx = px - joy.cx;
+    const vy = py - joy.cy;
+    const len = Math.hypot(vx, vy);
+    const max = joy.baseR - joy.knobR;
+
+    let nx = 0, ny = 0;
+    if (len > 0.0001) {
+      const scale = Math.min(1, max / len);
+      nx = vx * scale;
+      ny = vy * scale;
+    }
+    joy.knobX = nx;
+    joy.knobY = ny;
+    joy.dx = clamp(nx / max, -1, 1);
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (gameOver || choosingCard) return;
+    canvas.setPointerCapture(e.pointerId);
+    const p = getPointerPos(e);
+    const d = dist(p.x, p.y, joy.cx, joy.cy);
+    if (d <= joy.baseR + 10) {
+      joy.active = true;
+      joy.pid = e.pointerId;
+      updateJoy(p.x, p.y);
+    }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!joy.active || e.pointerId !== joy.pid) return;
+    const p = getPointerPos(e);
+    updateJoy(p.x, p.y);
+  });
+  canvas.addEventListener("pointerup", (e) => {
+    if (joy.active && e.pointerId === joy.pid) {
+      joy.active = false;
+      joy.pid = null;
+      resetJoy();
+    }
+  });
+  canvas.addEventListener("pointercancel", () => { joy.active = false; joy.pid = null; resetJoy(); });
+
+  // =========================
+  // CARD SYSTEM
+  // =========================
+  const CARD_TYPES = [
+    {
+      id: "mobility",
+      color: "#3aa0ff",
+      title: "기동",
+      desc: "더 빠르고, 더 잘 피한다",
+      lines: ["이속 +3%", "회피 +3%"],
+      apply() {
+        stats.move = Math.min(stats.move + 3, 35);    // ✅ 이속 상한 +35%
+        stats.evade = Math.min(stats.evade + 3, 20);  // ✅ 회피 상한 20%
+      }
+    },
+    {
+      id: "firepower",
+      color: "#ff4b4b",
+      title: "화력",
+      desc: "더 자주 쏘고, 크게 터진다",
+      lines: ["공속 +4%", "치명 +4%"],
+      apply() {
+        stats.fire = Math.min(stats.fire + 4, 85);    // ✅ 공속 상한 +85%
+        stats.crit = Math.min(stats.crit + 4, 30);    // ✅ 치명 상한 30%
+      }
+    },
+    {
+      id: "stability",
+      color: "#3ad67a",
+      title: "안정",
+      desc: "오래 버티고, 안정적으로 맞춘다",
+      lines: ["최대 HP +1", "명중 +4%"],
+      apply() {
+        if (stats.hpUp < 9) {                         // ✅ HP 증가는 최대 9회
+          stats.hpUp++;
+          HP_MAX += 1;
+          hp += 1;
+          hpDisplay = hp;
+          hpText = hp;
+        }
+        stats.accuracy = Math.min(stats.accuracy + 4, 98); // ✅ 명중 상한 98%
+      }
+    }
+  ];
+
+  function showCardUI() {
+    choosingCard = true;
+    paused = true;
+
+    canvas.style.pointerEvents = "none";
+    cardWrap.innerHTML = "";
+    cardOverlay.style.display = "flex";
+
+    CARD_TYPES.forEach((c, i) => {
+      const el = document.createElement("div");
+      el.className = "card";
+      el.style.background = `linear-gradient(180deg, ${c.color}, #111)`;
+      el.style.animationDelay = `${i * 0.08}s`;
+
+      el.innerHTML = `
+        <h3>${c.title}</h3>
+        <p>${c.desc}</p>
+        <div class="lines">${c.lines.join("<br>")}</div>
+      `;
+
+      el.addEventListener("click", () => {
+        c.apply();
+        hideCardUI();
+        nextWave();
+      });
+
+      cardWrap.appendChild(el);
+    });
+  }
+
+  function hideCardUI() {
+    choosingCard = false;
+    paused = false;
+    canvas.style.pointerEvents = "auto";
+    cardOverlay.style.display = "none";
+  }
+
+  // =========================
+  // GAME LOGIC
+  // =========================
+  function initStars() {
+    stars = Array.from({ length: 90 }, () => ({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: rand(0.6, 1.8),
+      s: rand(25, 90),
+      col: `hsla(${Math.floor(rand(0, 360))}, 85%, 80%, ${rand(0.55, 0.95).toFixed(2)})`
+    }));
+  }
+
+  function spawnWave(n) {
+    bullets = [];
+    enemyBullets = [];
+    enemies = [];
+    particles = [];
+    scorePops = [];
+
+    formation.x = 0;
+    formation.y = 85;
+    formation.dir = 1;
+    formation.speed = 25;
+
+    const targetCount = Math.min(n, 100);
+
+    const COLS = 10;
+    const gapX = 34;
+    const gapY = 34;
+    const startY = 0;
+
+    let created = 0;
+    const rows = Math.ceil(targetCount / COLS);
+
+    for (let r = 0; r < rows; r++) {
+      const remaining = targetCount - created;
+      const inRow = Math.min(COLS, remaining);
+
+      const rowWidth = (inRow - 1) * gapX;
+      const rowStartX = W / 2 - rowWidth / 2;
+
+      for (let i = 0; i < inRow; i++) {
+        const type = (r === 0) ? "elite" : (r < 2 ? "fast" : "basic");
+        const baseHp = (type === "elite") ? 2 : 1;
+        const hpBoost = Math.floor((n - 1) / 4);
+        const ehp = baseHp + hpBoost;
+
+        enemies.push({
+          x: rowStartX + i * gapX,
+          y: startY + r * gapY,
+          w: 24,
+          h: 20,
+          hp: ehp,
+          maxHp: ehp,
+          type,
+          formationIdx: r,
+          seed: Math.random() * 1000,
+          shootCd: rand(0.7, 1.8) * Math.max(0.55, 1.05 - n * 0.05),
+          alive: true
+        });
+
+        created++;
+        if (created >= targetCount) break;
+      }
+    }
+  }
+
+  function restart() {
+    score = 0;
+    wave = 1;
+    respawnTimer = 0;
+    lives = 2;
+
+    paused = false;
+    choosingCard = false;
+    gameOver = false;
+
+    hp = HP_MAX;
+    hpDisplay = hp;
+    hpText = hp;
+
+    player.x = W/2;
+    player.cooldown = 0;
+    player.invuln = 0;
+
+    finalScore.innerHTML = `SCORE<br><span class="scoreNum">000000</span>`;
+    gameOverUI.style.display = "none";
+    cardOverlay.style.display = "none";
+    canvas.style.pointerEvents = "auto";
+
+    spawnWave(wave);
+    resetJoy();
+  }
+
+  restartBtn.addEventListener("click", () => restart());
+
+  function nextWave() {
+    if (wave >= ROUND_MAX) {
+      // ✅ 100라운드 클리어 후엔 카드 없이 게임오버(클리어) 처리하고 싶으면 여기서 연출 가능
+      // 지금은 그냥 100까지만 진행(100도 적 스폰됨). 원하는 방식이면 바꿔드릴게요.
+    }
+
+    wave = Math.min(ROUND_MAX, wave + 1);
+
+    hp = HP_MAX;
+    hpDisplay = hp;
+    hpText = hp;
+
+    spawnWave(wave);
+
+    roundIntro = 1.05;
+    roundIntroShown = false;
+  }
+
+  function shoot() {
+    // 공속 적용
+    player.fireDelay = 1.0 / (1 + stats.fire / 100);
+
+    if (paused || choosingCard || gameOver) return;
+    if (player.cooldown > 0) return;
+
+    player.cooldown = player.fireDelay;
+    bullets.push({
+      x: player.x,
+      y: player.y - 18,
+      vx: 0,
+      vy: -600,
+      r: 3
+    });
+  }
+
+  function explode(x, y, n=18) {
+    for (let i=0; i<n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = rand(60, 240);
+      particles.push({
+        x, y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life: rand(0.25, 0.65),
+        r: rand(1, 2.4)
+      });
+    }
+  }
+
+  function roundBurst(x, y, n=70) {
+    for (let i=0; i<n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = rand(120, 420);
+      particles.push({
+        x, y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life: rand(0.35, 0.95),
+        r: rand(1.4, 3.2),
+        col: `hsla(${Math.floor(rand(0,360))}, 95%, 70%, 0.95)`
+      });
+    }
+  }
+
+  function popScore(x, y, txt) {
+    scorePops.push({ x, y, vy: -28, life: 0.75, txt });
+  }
+
+  function damagePlayer(dmg) {
+    // 무적/리셋/게임오버면 판정 자체 스킵
+    if (player.invuln > 0 || respawnTimer > 0 || gameOver) return;
+
+    // ✅ 회피(민첩): 피해를 무효화 + '회피' 연출
+    if (Math.random() < stats.evade / 100) {
+      popEvade(player.x, player.y - 18);
+      return;
+    }
+
+hp -= dmg;
+    hp = Math.max(0, hp);
+    hpText = hp;
+
+    player.invuln = 0.9;
+    explode(player.x, player.y, 22);
+
+    if (hp <= 0) {
+      if (lives > 0) {
+        lives -= 1;
+        respawnTimer = 2.0;
+        player.invuln = 1.6;
+        bullets = [];
+        enemyBullets = [];
+        explode(player.x, player.y, 30);
+        player.x = W / 2;
+      } else {
+        gameOver = true;
+        finalScore.innerHTML = `SCORE<br><span class="scoreNum">${String(score).padStart(6,"0")}</span>`;
+        gameOverUI.style.display = "flex";
+      }
+    }
+  }
+
+  // =========================
+  // UPDATE / RENDER
+  // =========================
+  let last = performance.now();
+
+  function update(dt, t) {
+    if (roundIntro > 0) roundIntro = Math.max(0, roundIntro - dt);
+
+    if (respawnTimer > 0) {
+      respawnTimer = Math.max(0, respawnTimer - dt);
+      if (respawnTimer === 0) {
+        hp = HP_MAX;
+        hpDisplay = hp;
+        hpText = hp;
+
+        player.x = W / 2;
+        player.cooldown = 0;
+        player.invuln = 1.6;
+
+        formation.x = 0;
+        formation.y = 85;
+        formation.dir = 1;
+
+        bullets = [];
+        enemyBullets = [];
+        particles = [];
+        scorePops = [];
+      }
+    }
+
+    if (gameOver) return;
+
+    // Stars
+    for (const s of stars) {
+      s.y += s.s * dt;
+      if (s.y > H + 10) {
+        s.y = -10;
+        s.x = Math.random() * W;
+        s.s = rand(25, 90);
+        s.r = rand(0.6, 1.8);
+        s.col = `hsla(${Math.floor(rand(0, 360))}, 85%, 80%, ${rand(0.55, 0.95).toFixed(2)})`;
+      }
+    }
+
+    if (respawnTimer > 0) return;
+    if (paused || choosingCard) return;
+
+    // Move input
+    let move = 0;
+    if (keys.has("arrowleft") || keys.has("a")) move -= 1;
+    if (keys.has("arrowright") || keys.has("d")) move += 1;
+    if (Math.abs(joy.dx) > 0.02) move += joy.dx;
+
+    // 이속 적용
+    const speedMul = 1 + stats.move / 100;
+    player.x += move * player.speed * speedMul * dt;
+    player.x = clamp(player.x, 18, W - 18);
+
+    // Cooldown
+    player.cooldown = Math.max(0, player.cooldown - dt);
+
+    // Auto fire
+    if (player.cooldown <= 0) shoot();
+
+    player.invuln = Math.max(0, player.invuln - dt);
+
+    // Formation move
+    formation.x += formation.dir * formation.speed * dt;
+
+    let minX = Infinity, maxX = -Infinity;
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      minX = Math.min(minX, e.x + formation.x);
+      maxX = Math.max(maxX, e.x + formation.x);
+    }
+    if (minX !== Infinity) {
+      if (minX < 30 && formation.dir < 0) { formation.dir = 1; formation.y += formation.drop; }
+      if (maxX > W - 30 && formation.dir > 0) { formation.dir = -1; formation.y += formation.drop; }
+    }
+
+    // Enemy shoot
+    const aliveEnemies = enemies.filter(e => e.alive);
+    for (const e of aliveEnemies) {
+      e.shootCd -= dt;
+      if (e.shootCd <= 0) {
+        e.shootCd = rand(0.9, 2.2) * Math.max(0.50, 1.05 - wave*0.045);
+
+        const chance = e.type === "elite" ? 0.55 : (e.type === "fast" ? 0.40 : 0.28);
+        if (Math.random() < chance) {
+          const ex = e.x + formation.x;
+          const ey = e.y + formation.y + Math.sin((t + e.seed) * 3) * 2;
+          const dx = (player.x - ex) * 0.12;
+
+          enemyBullets.push({
+            x: ex,
+            y: ey + 10,
+            vx: clamp(dx, -160, 160),
+            vy: 320,
+            r: 3
+          });
+        }
+      }
+    }
+
+    // Bullets
+    for (const b of bullets) { b.x += b.vx * dt; b.y += b.vy * dt; }
+    bullets = bullets.filter(b => b.y > -60);
+
+    for (const b of enemyBullets) { b.x += b.vx * dt; b.y += b.vy * dt; }
+    enemyBullets = enemyBullets.filter(b => b.y < H + 80);
+
+    // Particles
+    for (const p of particles) {
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= (1 - 2.2 * dt);
+      p.vy *= (1 - 2.2 * dt);
+    }
+    particles = particles.filter(p => p.life > 0);
+
+    // Score pops
+    for (const s of scorePops) {
+      s.life -= dt;
+      s.y += s.vy * dt;
+    }
+    scorePops = scorePops.filter(s => s.life > 0);
+
+    // Hit enemies
+    for (const b of bullets) {
+      if (b.y < -10) continue;
+
+      for (const e of enemies) {
+        if (!e.alive) continue;
+
+        const ex = e.x + formation.x;
+        const ey = e.y + formation.y + Math.sin((t + e.seed) * 2.8) * formation.wobble;
+
+        const bw = b.r * 2, bh = 14;
+        const bx = b.x - b.r, by = b.y - 10;
+
+        const ex0 = ex - e.w/2, ey0 = ey - e.h/2;
+
+        if (aabb(bx, by, bw, bh, ex0, ey0, e.w, e.h)) {
+          b.y = -9999;
+
+          // ✅ 명중 판정 (기본 84% + 정확 누적, 최대 98%)
+          const hitChance = clamp(84 + (stats.accuracy || 0), 25, 98);
+          if (Math.random() > hitChance / 100) {
+            popMiss(ex, ey); // MISS 연출
+            break; // 데미지 없이 종료
+          }
+
+          // 치명
+          let dmg = 1;
+          if (Math.random() < stats.crit / 100) dmg = 2;
+
+          e.hp -= dmg;
+          explode(ex, ey, 10);
+
+          if (e.hp <= 0) {
+            e.alive = false;
+            const add = 10;
+            score += add;
+            popScore(ex, ey, `+${add}`);
+            explode(ex, ey, 20);
+          }
+          break;
+        }
+      }
+    }
+    bullets = bullets.filter(b => b.y > -500);
+
+    // Player hit
+    if (player.invuln <= 0) {
+      const px0 = player.x - player.w/2;
+      const py0 = player.y - player.h/2;
+
+      for (const b of enemyBullets) {
+        const bx0 = b.x - b.r;
+        const by0 = b.y - b.r;
+        if (aabb(bx0, by0, b.r*2, b.r*2, px0, py0, player.w, player.h)) {
+          b.y = 99999;
+          damagePlayer(18);
+          break;
+        }
+      }
+      enemyBullets = enemyBullets.filter(b => b.y < 9999);
+    }
+
+    // Enemy reaches player line -> instant kill
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const ey = e.y + formation.y;
+      const enemyBottom = ey + e.h / 2;
+      const playerLine = player.y - player.h / 2;
+
+      if (enemyBottom >= playerLine) {
+        damagePlayer(HP_MAX + 9999);
+        formation.y -= 28;
+        break;
+      }
+    }
+
+    // Wave clear -> show cards
+    if (!choosingCard && enemies.every(e => !e.alive)) {
+      showCardUI();
+    }
+  }
+
+  function render(t) {
+    ctx.clearRect(0, 0, W, H);
+
+    // Stars
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    for (const s of stars) {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+      ctx.fillStyle = s.col;
+      ctx.fill();
+    }
+    ctx.restore();
+
+    drawPlayer(t);
+
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const ex = e.x + formation.x;
+      const ey = e.y + formation.y + Math.sin((t + e.seed) * 2.8) * formation.wobble;
+      drawEnemy(ex, ey, e.hp, e.maxHp, e.formationIdx);
+    }
+
+    // Bullets
+    ctx.save();
+    ctx.fillStyle = "#c6ff65";
+    for (const b of bullets) {
+      roundRectPath(b.x - 2, b.y - 9, 4, 16, 3);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "#ff6d8c";
+    for (const b of enemyBullets) {
+      const dx = b.x - joy.cx;
+      const dy = b.y - joy.cy;
+      const d = Math.hypot(dx, dy);
+      if (d < joy.baseR + 6) continue; // 조이스틱 아래로 지나가게
+
+      roundRectPath(b.x - 2, b.y - 7, 4, 12, 3);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Particles
+    ctx.save();
+    for (const p of particles) {
+      const a = clamp(p.life / 0.65, 0, 1);
+      ctx.globalAlpha = a;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fillStyle = p.col || "rgba(255,220,140,0.95)";
+      ctx.fill();
+    }
+    ctx.restore();
+
+    drawScorePops();
+    drawHPBar();
+    drawScoreUI();
+    drawWaveBadge();
+    drawJoystick();
+    drawLivesUI();
+    drawRoundIntro(t);
+
+    // ✅ 일시정지 안내는 카드 선택 중에는 안 띄움
+    if (paused && !choosingCard && !gameOver) overlayText("일시정지 (P)", "조이스틱=이동 / 자동발사");
+  }
+
+  // =========================
+  // DRAW
+  // =========================
+  function drawRoundIntro(t) {
+    if (roundIntro <= 0) return;
+
+    if (!roundIntroShown) {
+      roundIntroShown = true;
+      roundBurst(W/2, H/2 - 20, 90);
+    }
+
+    const a = clamp(roundIntro / 1.05, 0, 1);
+    const pop = 1 + (1 - a) * 0.18;
+
+    ctx.save();
+    ctx.translate(W/2, H/2 - 20);
+    ctx.scale(pop, pop);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    const txt = `Round ${wave}`;
+
+    ctx.font = "900 44px 'Impact','Arial Black','Trebuchet MS',system-ui,sans-serif";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 10;
+    ctx.globalAlpha = 0.55 * a;
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.strokeText(txt, 0, 0);
+
+    const grad = ctx.createLinearGradient(-120, -20, 120, 20);
+    grad.addColorStop(0, "#FFE27A");
+    grad.addColorStop(0.5, "#FFB7D5");
+    grad.addColorStop(1, "#8FD3FF");
+    ctx.globalAlpha = 0.95 * a;
+    ctx.fillStyle = grad;
+    ctx.fillText(txt, 0, 0);
+
+    ctx.globalAlpha = 0.35 * a;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(255,255,255,0.8)";
+    ctx.strokeText(txt, 1, -1);
+
+    ctx.restore();
+  }
+
+  function drawHPBar() {
+    const pad = 12;
+    const x = pad;
+    const y = pad;
+
+    const barW = 190;
+    const barH = 14;
+    const radius = 8;
+
+    hpDisplay += (hp - hpDisplay) * 0.18;
+    if (Math.abs(hp - hpDisplay) < 0.05) hpDisplay = hp;
+
+    const pct = clamp(hpDisplay / HP_MAX, 0, 1);
+
+    ctx.save();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    roundRectPath(x - 2, y - 2, barW + 4, barH + 4, radius + 2);
+    ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = "rgba(20,20,30,0.85)";
+    roundRectPath(x, y, barW, barH, radius);
+    ctx.fill();
+
+    const grad = ctx.createLinearGradient(x, y, x, y + barH);
+    grad.addColorStop(0, "#ff8fa3");
+    grad.addColorStop(1, "#ff2e55");
+    ctx.fillStyle = grad;
+    roundRectPath(x, y, barW * pct, barH, radius);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.30;
+    ctx.fillStyle = "#ffffff";
+    roundRectPath(x + 2, y + 2, Math.max(0, barW * pct - 4), 3, 3);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    ctx.lineWidth = 1;
+    roundRectPath(x, y, barW, barH, radius);
+    ctx.stroke();
+
+    const hpNow = Math.max(0, Math.floor(hpText));
+    const hpMax = HP_MAX;
+
+    ctx.font = "800 11px 'Segoe UI', system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+
+    ctx.fillStyle = "rgba(0,0,0,0.70)";
+    ctx.fillText("HP:", x + 8 + 1, y + barH/2 + 1);
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    ctx.fillText("HP:", x + 8, y + barH/2);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(0,0,0,0.70)";
+    ctx.fillText(`${hpNow} / ${hpMax}`, x + barW/2 + 1, y + barH/2 + 1);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(`${hpNow} / ${hpMax}`, x + barW/2, y + barH/2);
+
+    ctx.restore();
+  }
+
+
+  function popMiss(x, y) {
+  scorePops.push({
+    x,
+    y,
+    vy: -22,
+    life: 0.6,
+    txt: "MISS",
+    miss: true
+  });
+}
+
+  function popEvade(x, y) {
+    scorePops.push({
+      x,
+      y,
+      vy: -24,
+      life: 0.6,
+      txt: "회피",
+      evade: true
+    });
+
+    // 살짝 반짝이는 파티클
+    for (let i = 0; i < 10; i++) {
+      particles.push({
+        x: x + rand(-8, 8),
+        y: y + rand(-6, 6),
+        vx: rand(-120, 120),
+        vy: rand(-140, 80),
+        life: rand(0.12, 0.26),
+        r: rand(0.8, 2.0),
+        col: "rgba(150,220,255,0.9)"
+      });
+    }
+  }
+
+
+
+
+
+
+
+
+  function drawWaveBadge() {
+    const x = 16;
+    const y = H - 22;
+
+    const label = "Round ";
+    const numStr = String(wave);
+
+    ctx.save();
+    ctx.font = "900 26px 'Impact','Arial Black','Trebuchet MS',system-ui,sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+
+    const grad = ctx.createLinearGradient(x, y - 18, x + 160, y + 10);
+    grad.addColorStop(0, "#FFE27A");
+    grad.addColorStop(0.45, "#FFC247");
+    grad.addColorStop(1, "#FF7A00");
+
+    ctx.shadowColor = "rgba(0,0,0,0.55)";
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 2;
+
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "rgba(0,0,0,0.70)";
+    ctx.strokeText(label, x, y);
+
+    ctx.fillStyle = grad;
+    ctx.fillText(label, x, y);
+
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,255,255,0.65)";
+    ctx.strokeText(label, x + 1, y - 1);
+    ctx.globalAlpha = 1;
+
+    const labelW = ctx.measureText(label).width;
+    const nx = x + labelW;
+
+    ctx.shadowColor = "rgba(0,0,0,0.55)";
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 2;
+
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "rgba(0,0,0,0.70)";
+    ctx.strokeText(numStr, nx, y);
+
+    ctx.fillStyle = "#ff9aa8";
+    ctx.fillText(numStr, nx, y);
+
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,255,255,0.65)";
+    ctx.strokeText(numStr, nx + 1, y - 1);
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
+  }
+
+  function drawScorePops() {
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    for (const s of scorePops) {
+      const a = clamp(s.life / 0.75, 0, 1);
+      ctx.globalAlpha = a;
+
+      if (s.miss) {
+        ctx.font = "900 16px system-ui, sans-serif";
+        ctx.fillStyle = "rgba(255,235,180,0.95)";
+        ctx.shadowColor = "rgba(0,0,0,0.65)";
+        ctx.shadowBlur = 6;
+      } else if (s.evade) {
+        ctx.font = "900 16px system-ui, sans-serif";
+        ctx.fillStyle = "rgba(160,235,255,0.95)";
+        ctx.shadowColor = "rgba(0,0,0,0.65)";
+        ctx.shadowBlur = 6;
+      } else {
+        ctx.font = "800 18px 'Trebuchet MS','Segoe UI',system-ui,sans-serif";
+        ctx.fillStyle = "#ffd39b";
+        ctx.shadowColor = "rgba(255,190,120,0.65)";
+        ctx.shadowBlur = 10;
+      }
+
+      ctx.fillText(s.txt, s.x, s.y);
+      ctx.shadowBlur = 0;
+    }
+
+    ctx.restore();
+  }
+
+  function drawLivesUI() {
+    const margin = 18;
+    const shipW = 24;
+    const gap = 32;
+    const totalW = (lives <= 0) ? 0 : (shipW + (lives - 1) * gap);
+    const startX = W - margin - totalW;
+    const y = H - margin - 14;
+
+    ctx.save();
+    ctx.globalAlpha = 0.95;
+    for (let i = 0; i < lives; i++) drawLifeShip(startX + i * gap, y, 1.0);
+    ctx.restore();
+  }
+
+  function drawLifeShip(x, y, s=1) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+
+    ctx.globalAlpha = 0.25;
+    ctx.beginPath();
+    ctx.arc(0, 4, 18, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(110,180,255,0.35)";
+    ctx.fill();
+
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, -14);
+    ctx.lineTo(12, 10);
+    ctx.lineTo(0, 6);
+    ctx.lineTo(-12, 10);
+    ctx.closePath();
+    ctx.fillStyle = "#eaf1ff";
+    ctx.fill();
+
+    roundRectPath(-4, -4, 8, 8, 3);
+    ctx.fillStyle = "#5fb0ff";
+    ctx.fill();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawJoystick() {
+    ctx.save();
+    const alpha = joy.active ? 0.95 : 0.55;
+    ctx.globalAlpha = alpha;
+
+    ctx.beginPath();
+    ctx.arc(joy.cx, joy.cy, joy.baseR, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(0,0,0,0.26)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(140,190,255,0.35)";
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(joy.cx, joy.cy, joy.baseR - 12, 0, Math.PI*2);
+    ctx.strokeStyle = "rgba(255,255,255,0.12)";
+    ctx.stroke();
+
+    ctx.globalAlpha = alpha * 0.8;
+    ctx.fillStyle = "rgba(210,235,255,0.65)";
+    drawTri(joy.cx - 22, joy.cy, -1);
+    drawTri(joy.cx + 22, joy.cy,  1);
+
+    ctx.globalAlpha = alpha;
+    const kx = joy.cx + joy.knobX;
+    const ky = joy.cy + joy.knobY;
+
+    ctx.beginPath();
+    ctx.arc(kx, ky, joy.knobR, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(40,90,150,0.55)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(180,230,255,0.50)";
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(kx - 7, ky - 7, 5, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawTri(x, y, dir) {
+    ctx.beginPath();
+    if (dir < 0) {
+      ctx.moveTo(x + 6, y - 10);
+      ctx.lineTo(x - 6, y);
+      ctx.lineTo(x + 6, y + 10);
+    } else {
+      ctx.moveTo(x - 6, y - 10);
+      ctx.lineTo(x + 6, y);
+      ctx.lineTo(x - 6, y + 10);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawScoreUI() {
+    const pad = 12;
+    const hpBarW = 190;
+    const x = pad + hpBarW + 14;
+    const y = pad + 1;
+
+    const title = "SCORE";
+    const value = String(score).padStart(6, "0");
+
+    ctx.save();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+
+    ctx.font = "900 20px 'Trebuchet MS', system-ui, sans-serif";
+    ctx.fillStyle = "#ff3b3b";
+    ctx.shadowColor = "rgba(0,0,0,0.65)";
+    ctx.shadowBlur = 6;
+    ctx.fillText(title, x, y);
+
+    ctx.shadowBlur = 0;
+    ctx.font = "900 20px 'Trebuchet MS', system-ui, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(value, x, y + 20);
+
+    ctx.restore();
+  }
+
+  function drawPlayer(t) {
+    const blink = player.invuln > 0 ? (Math.sin(t * 18) > 0 ? 0.35 : 1) : 1;
+
+    ctx.save();
+    ctx.globalAlpha = blink;
+    ctx.translate(player.x, player.y);
+
+    ctx.beginPath();
+    ctx.arc(0, 4, 22, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(110,180,255,0.15)";
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(0, -16);
+    ctx.lineTo(16, 12);
+    ctx.lineTo(0, 8);
+    ctx.lineTo(-16, 12);
+    ctx.closePath();
+    ctx.fillStyle = "#eaf1ff";
+    ctx.fill();
+
+    roundRectPath(-5, -6, 10, 10, 4);
+    ctx.fillStyle = "#5fb0ff";
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(-9, 12);
+    ctx.lineTo(-4, 22 + Math.sin(t * 20) * 2);
+    ctx.lineTo(0, 12);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,180,80,0.95)";
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(9, 12);
+    ctx.lineTo(4, 22 + Math.cos(t * 18) * 2);
+    ctx.lineTo(0, 12);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,120,90,0.9)";
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawEnemy(x, y, hpVal, maxHp, formationIdx = 0) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    const idx = clamp(formationIdx, 0, 9);
+    const pal = FORMATION_COLORS[idx];
+
+    const body = pal.body;
+    const wing = pal.wing;
+    const eye  = pal.eye;
+
+    ctx.beginPath();
+    ctx.ellipse(-14, 0, 12, 7, -0.25, 0, Math.PI*2);
+    ctx.ellipse(14, 0, 12, 7,  0.25, 0, Math.PI*2);
+    ctx.fillStyle = wing;
+    ctx.fill();
+
+    roundRectPath(-12, -9, 24, 18, 7);
+    ctx.fillStyle = body;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(-5, -1, 2.2, 0, Math.PI*2);
+    ctx.arc( 5, -1, 2.2, 0, Math.PI*2);
+    ctx.fillStyle = eye;
+    ctx.fill();
+
+    const barW = 16;
+    const barH = 3;
+    const yOff = -16;
+    const ratio = Math.max(0, Math.min(1, hpVal / Math.max(1, maxHp)));
+
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(-barW/2, yOff, barW, barH);
+
+    ctx.fillStyle = "#ff9aa8";
+    ctx.fillRect(-barW/2, yOff, barW * ratio, barH);
+
+    ctx.restore();
+  }
+
+  function overlayText(title, sub) {
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.font = "bold 34px system-ui, sans-serif";
+    ctx.fillText(title, W/2, H/2 - 10);
+
+    if (sub) {
+      ctx.fillStyle = "rgba(230,240,255,0.9)";
+      ctx.font = "14px system-ui, sans-serif";
+      ctx.fillText(sub, W/2, H/2 + 24);
+    }
+    ctx.restore();
+  }
+
+  // =========================
+  // LOOP
+  // =========================
+  function loop(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+
+    update(dt, now/1000);
+    render(now/1000);
+
+    requestAnimationFrame(loop);
+  }
+
+  function boot() {
+    initStars();
+    restart();
+    requestAnimationFrame(loop);
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
